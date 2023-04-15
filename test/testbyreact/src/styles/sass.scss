@@ -1,0 +1,58 @@
+$myColor: red;
+$colors: (
+  primary: #ff0000,
+  secondary: #00ff00,
+  tertiary: #0000ff,
+);
+
+h1 {
+  color: $myColor;
+  font-size: 40px;
+  background-color: map-get($colors, secondary);
+}
+// 定义混合
+@mixin rounded-border($radius) {
+  border-radius: $radius;
+}
+
+.container {
+  $font-size: 12px;
+  $font-color: black;
+  h2 {
+    font-size: $font-size + 10px;
+  }
+  ul {
+    padding: percentage($number: 0.01);
+    li {
+      margin: 10px;
+      p {
+        font-size: $font-size;
+        color: $font-color;
+      }
+
+      &:hover {
+        p {
+          $font-color: pink;
+          color: $font-color;
+          @if $font-color == pink {
+            font-size: $font-size + 5px;
+          } @else {
+            font-size: $font-size;
+          }
+        }
+      }
+      &.active {
+        background-color: darkgoldenrod;
+        p {
+          font-weight: 800;
+        }
+      }
+    }
+  }
+
+  &:hover {
+    //使用混合
+    @include rounded-border(8px);
+    border: 2px solid black;
+  }
+}
