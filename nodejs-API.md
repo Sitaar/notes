@@ -18,6 +18,8 @@ order和product存在关联。
 
 # 开始开发
 
+测试API使用postman软件
+
 ## 依赖
 
 通篇使用了pnpm代替npm。
@@ -178,7 +180,149 @@ router.post('/',(req,res,next) => {
 
 ​	请求成功可以获得结果`123,12`
 
-测试API使用postman软件
+### dotenv
+
+创建环境变量存储文件.env
+
++ 安装依赖
+
+`pnpm i --save dotenv`
+
++ 引用依赖
+
+注意：1、在`app.js`或`server.js`文件中引用依赖；2、必须写在所有引用的最上方
+
+```js
+//app.js
+require("dotenv").config();
+...
+```
+
++ .env文件内容
+
+```
+MONGO_ATLAS_PW=123
+JWT_KEY=111
+```
+
++ 变量使用
+
+```js
+process.env.MONGO_ATLAS_PW
+```
+
+### bcrypt
+
+在Node.js 中安全地对密码进行哈希处理
+
++ 安装依赖
+
+`pnpm i --save bcrypt`
+
++ 引用依赖
+
+```js
+const bcrypt = require('bcrypt');
+```
+
++ 使用
+
+```js
+//加密
+//将输入的密码进行加密，salt为10；
+//回调如果是hash,加密成功，hash为生成的salt
+bcrypt.hash(req.body.password,10,(err,hash) => {
+  if(err){
+    ...
+  }else{
+    const user = new User({
+      _id:new mongoose.Types.ObjectId(),
+      email:req.body.email,
+      password:hash//成功加密后的结果
+    });
+  }
+})；
+
+//比较
+//比较输入的密码和数据库中的密码是否一致
+//result结果为true说明两者加密形式一致，后续在通过json web token进行处理
+bcrypt.compare(req.body.password,user[0].password,(err,result) => {
+  if(err){
+    ...
+  }
+  if(result){
+    ...解析成功
+  }
+})
+```
+
+### jsonwebtoken
+
+使用基于 Token 的身份验证方法，在服务端不需要存储用户的登录记录。大概流程：
+
+1. 客户端使用用户名跟密码请求登录
+2. 服务端收到请求，去验证用户名与密码
+3. 验证成功后，服务端会签发一个 Token，再把这个 Token 发送给客户端
+4. 客户端收到 Token 以后可以把它存储起来，比如放在 Cookie 里或者 Local Storage 里
+5. 客户端每次向服务端请求资源的时候需要带着服务端签发的 Token
+6. 服务端收到请求，然后去验证客户端请求里面带着的 Token，如果验证成功，就向客户端返回请求的数据
+
+实施 Token 验证的方法挺多的，还有一些标准方法，比如 JWT(JSON Web Tokens) 。JWT 标准的 Token 有三个部分：
+
+- header（头部）--- 加密算法
+- payload（数据）--- 具体内容
+- signature（签名）--- key
+
+中间用点分隔开，并且都会使用 Base64 编码，所以真正的 Token 看起来像这样：
+
+```js
+eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJuaW5naGFvLm5ldCIsImV4cCI6IjE0Mzg5NTU0NDUiLCJuYW1lIjoid2FuZ2hhbyIsImFkbWluIjp0cnVlfQ.SwyHTEx_RQppr97g4J5lKXtabJecpejuef8AqKYMAJc
+```
+
+应用步骤
+
++ 安装依赖
+
+`pnpm i --save jsonwebtoken`
+
++ 定义key
+
+定义环境变量` JWT_KEY`
+
+```
+//.env
+JWT_KEY=***  
+```
+
++ 引用依赖
+
+```js
+const jwt = require('jsonwebtoken');
+```
+
++ 加密和校验
+
+token <== 基本信息 + key
+
+token + key ==> 基本信息
+
+```js
+//jwt.sign()
+//token <== 基本信息 + key
+//参数1:基本信息；参数2：key；参数3：过期时间
+const token = jwt.sign({
+  email:user[0].email,
+  userId:user[0]._id
+},process.env.JWT_KEY,{
+  expiresIn:"1h",
+});
+```
+
+```js
+//jwt.verify()
+//token + key ==> 基本信息
+const decoded = jwt.verify(token,process.env.JWT_KEY);
+```
 
 ## 路由的设置
 
@@ -234,6 +378,66 @@ app.use((req,res,next)=>{
 ```
 
 `res.header("Access-Control-Allow-Origin", "*");` 标识允许那个域，*比较粗暴，表示全部都允许。
+
+## .env文件的设置
+
+存储环境变量的文件，可以借助依赖`dotenv`文件夹。
+
++ 安装依赖
+
+`pnpm i --save dotenv`
+
++ 引用依赖
+
+注意：1、在`app.js`或`server.js`文件中引用依赖；2、必须写在所有引用的最上方
+
+```js
+//app.js
+require("dotenv").config();
+...
+```
+
++ .env文件内容
+
+`MONGO_ATLAS_PW` 指 在线mongoDB的连接密码
+
+`JWT_KEY` 指 ` JSON Web Token（JWT）`密码管理key
+
+```
+MONGO_ATLAS_PW=***
+JWT_KEY=***  
+```
+
++ 变量使用
+
+在线mongoDB的连接
+
+```js
+mongoose.connect('mongodb+srv://db:'
++process.env.MONGO_ATLAS_PW
++'@test.gx6wc.mongodb.net/?retryWrites=true&w=majority&appName=test');
+
+mongoose.Promise = global.Promise;
+```
+
+密码加密与校验
+
+```js
+const token = jwt.sign({
+  email:user[0].email,
+  userId:user[0]._id
+},process.env.JWT_KEY,{
+  expiresIn:"1h",
+});
+```
+
+```js
+const decoded = jwt.verify(token,process.env.JWT_KEY);
+```
+
+## 状态码的使用
+
+
 
 ## MongoDB的设置
 
@@ -457,16 +661,26 @@ product.save()
         })
 ```
 
-updateOne: 修改
+##### updateOne: 修改
 
 ```js
 const updateOpts = {
   name:"",
   price:22,
 };
+//找到指定id的数据，并修改对应字段
 Product.updateOne({_id:id},{$set:updateOpts})
   .exec()
   .then(result=>{      
+})
+```
+
+##### deleteOne: 删除
+
+```js
+Product.deleteOne({_id:id})
+  .exec()
+  .then(result=>{     
 })
 ```
 
