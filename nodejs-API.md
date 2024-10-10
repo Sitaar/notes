@@ -437,7 +437,287 @@ const decoded = jwt.verify(token,process.env.JWT_KEY);
 
 ## 状态码的使用
 
+http请求的响应结果会通过状态码来反应和归类。
 
+### 分类
+
+响应状态码通常分为5类：
+
+**100-199**：信息响应
+
+**200-299**：成功响应
+
++ 200: 请求成功，通常用在Get、Delete等请求;
+
++ 201: 创建成功，通常用在Post请求；
+
+**300-399**：重定向
+
+**400-499**：客户端错误
+
++ 400: 客户端错误，如语法错误、无效信息等，服务端不会处理请求；
+
++ 401: 身份权限错误；
+
++ 403: 客户端未经授权；
+
++ 404: 服务器无法找到请求内容；
++ 409: 请求与当前服务器状态冲突；
+
+**500-599**：服务端错误
+
+​	500: 服务器遇到未知错误；
+
+### 定义状态码的code
+
+`res.status(200).json({...}}); `
+
+```js
+//GET 200
+//catch err 500
+const get_orders_all =(req,res,next) => {
+    Order.find()
+    .select('product quantity _id')
+    .populate('product','name price')
+    .exec()
+    .then(docs=>{
+        const response = {
+            ...
+        };
+        res.status(200).json(response);        
+    })
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+```js
+//POST
+//创建订单
+//创建前先查找是否存在对应产品
+//没有返回 404
+//创建成功 返回 201
+//catch err 500
+const create_order = (req,res,next) => {
+    Product.findById(req.body.productId)
+    .then(product=>{
+        if(!product){
+            return product;
+        }
+        const order = new Order(...);
+        return order.save()       
+    })
+    .then(result=>{
+        if(!result){
+            res.status(404).json({
+                message: 'Product not found'
+            });
+        }else{
+          const response = {
+            ...
+        };
+        res.status(201).json(response); 
+    }
+    }) 
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+```js
+//注册账号 POST
+//注册之前查找是否存在邮箱
+//存在 409
+//不存在，允许创建
+//密码加密，加密失败 500
+//成功注册 201
+//catch err 500
+const user_signup = (req,res,next) => {
+    User.findOne({email: req.body.email})
+    .exec()
+    .then(user=>{
+        if(user){
+            res.status(409).json({
+                message:"Mail exists"
+            });
+        }else{
+            bcrypt.hash(req.body.password,10,(err,hash) => {
+                if(err){
+                    return res.status(500).json({
+                        err:err
+                    })
+                }else{
+                    const user = new User(...);
+                    user
+                    .save()
+                    .then(result=>{                       
+                        res.status(201).json(...);
+                    })
+                    .catch(err=>{
+                        res.status(500).json({
+                            error:err
+                        });
+                    });
+                }
+            })
+        }
+    })
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+```js
+//用户登录 GET
+//查找账户是否存在
+//不存在 401
+//校验密码，密码不对 401
+//匹配 200
+const user_login = (req,res,next) => {
+    User.find({email: req.body.email})
+    .exec()
+    .then(user=>{
+        if(user.length<1){
+            res.status(401).json({
+                message:"Auth Failed"
+            });
+        }else{
+            bcrypt.compare(req.body.password,user[0].password,(err,result) => {
+                if(err){
+                    res.status(401).json({
+                        message:"Auth Failed"
+                    });
+                }
+                if(result){
+                    const token = jwt.sign({
+                        email:user[0].email,
+                        userId:user[0]._id
+                    },process.env.JWT_KEY,{
+                        expiresIn:"1h",
+                    });
+                    res.status(200).json({
+                        message:"Auth successfully",
+                        token:token,
+                        request:{
+                            type: 'POST',
+                            url: 'http://localhost:3000/user/signup',
+                            body:{
+                                email:"string",
+                                password:"string"
+                            }
+                        }
+                    });
+                }else{
+                    res.status(401).json({
+                        message:"Auth Failed"
+                    });
+                }
+            })
+        }
+    })
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+
+
+### 其他响应信息的定义
+
+通常返回状态码的同时，还要返回一些有用信息。
+
+如请求所有产品的信息，那么就至少需要
+
++ 范围一个产品数组，每个元素中包括产品的必要信息；
++ 产品的个数；
++ （可选）单个产品查询请求的url帮助
+
+这里给出模版公参考
+
+```js
+//GET ALL请求
+const response = {
+  count:docs.length;
+  products:docs.map(_=>{
+  	return {
+  		name:..,
+  		price:..,
+  		_id:id,
+  		request:{
+  			type:'GET',
+  			url: 'http://localhost:3000/products/'+_._id
+			}
+		};
+	});
+};
+```
+
+```js
+//GET ONE请求
+const response = {
+  result: doc,
+  request:{
+    type: 'GET',
+    url: 'http://localhost:3000/orders/'
+  }
+}
+```
+
+```js
+//POST请求
+const response = {
+  message:'Create order successfully' ,
+  createdOrder: {
+    result: {
+      product:result.product,
+      quantity:result.quantity,
+      _id:result._id
+    },
+    request:{
+      type: 'GET',
+      url: 'http://localhost:3000/orders/'+result._id
+    }
+  }
+}
+```
+
+```js
+//DELETE ONE删除
+const response = {
+  message:"Order deleted successfully",
+  request:{
+    type: 'POST',
+    url: 'http://localhost:3000/orders/',
+    body:{
+      productId:"string",
+      quantity:"Number"
+    }
+  }
+}
+```
+
+```js
+//PATCH ONE修改
+const response = {
+  message:"Product updated successfully",
+  request:{
+    type: 'GET',
+    url: 'http://localhost:3000/products/'+id
+  }
+}
+```
 
 ## MongoDB的设置
 
