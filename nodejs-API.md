@@ -324,6 +324,52 @@ const token = jwt.sign({
 const decoded = jwt.verify(token,process.env.JWT_KEY);
 ```
 
+### multer
+
+使用依赖 `Multer` 上传文件，用于处理 `multipart/form-data` 类型的表单数据。
+
+详见POST文件的设置
+
+## 项目文件的架构
+
+通常文件架构是在开发过程中，逐步完善的，但是也可以直接确定架构后，按照模版的进行开发。
+
+-** 表示文件；**表示文件夹
+
+这里仅展示手动创建且会修改的文件及文件夹
+
+```
+项目文件夹(根目录)
+  -package.json 			配置文件 pnpm i 会自动生成
+  -gitignore 					git操作会忽略的文件
+  -.env								环境变量的配置 结合dotenv依赖使用
+  -app.js							全局变量、路由的配置等
+  -server.js					启动文件 常规启动 终端node server.js
+  uploads							文件夹 上传文件的存储位置
+  	-**.jpeg
+  api									api相关代码文件夹
+    models						数据表的定义
+      -product.js		
+      -order.js
+      -user.js
+    routers						路由 api请求响应
+      -products.js
+      -orders.js
+      -user.js
+    middleware				中间件
+      -check-auth.js
+    controllers				路由 api请求响应的回调
+      -products.js
+      -orders.js
+      -user.js
+```
+
+这里需要说明的是
+
+controllers文件夹下的内容是从routers中提取出来的，目的是为了代码的可读性。
+
+middleware中会放入多处经常需要使用的中间件。
+
 ## 路由的设置
 
 以 <u>localhost:3000/products</u> 为例，新建文件夹**routers**, 然后在文件夹中新建文件**products.js**
@@ -632,8 +678,6 @@ const user_login = (req,res,next) => {
 };
 ```
 
-
-
 ### 其他响应信息的定义
 
 通常返回状态码的同时，还要返回一些有用信息。
@@ -718,6 +762,408 @@ const response = {
   }
 }
 ```
+
+## POST文件的设置
+
+使用依赖 `Multer` 上传文件，用于处理 `multipart/form-data` 类型的表单数据。
+
+这里以创建一个`product`，表单中需要上传 `productImage` 为例。
+
++ 安装依赖
+
+`pnpm i --save multer`
+
++ 引用依赖
+
+```js
+//routers\products.js
+const multer = require('multer');
+```
+
++ 设置文件的存储`storage`
+
+`destination` 文件的存储位置，在根目录中创建一个文件夹`uploads`
+
+`filename` 文件的命名, 举例：2024-09-04T14:14:22.081Z11.jpeg
+
+```js
+const storage = multer.diskStorage({
+    destination: function(req,file,cb){
+        cb(null,'./uploads/')
+    },
+    filename: function(req,file,cb){
+        cb(null,new Date().toISOString() + file.originalname)
+    },
+});
+```
+
++ 筛选文件`fileFilter`
+
+文件类型为 `png/jpeg`
+
+```js
+const fileFilter = (req,file,cb)=>{
+    if(file.mimetype === 'image/jpeg' || file.mimetype === 'image/png'){
+        cb(null,true);
+    }else{
+        cb(null,false);
+    }
+};
+```
+
++ 上传文件的全部设置 `Options`
+
+`multer(options)`
+
+```js
+//fileSize文件大小设置
+const upload = multer({
+    storage: storage,
+    limits:{
+        fileSize:1024*1024*5
+    },
+    fileFilter: fileFilter
+});
+```
+
++ 读取文件
+
+`upload.single('fieldname')` 接受一个以 **fieldname** 命名的文件。这个文件的信息保存在 req.file
+
+```js
+router.post('/',upload.single('productImage'),(req,res,next) => {
+    const product = new Product({
+        _id:new mongoose.Types.ObjectId(),
+        name:req.body.name,
+        price:req.body.price,
+        productImage:req.file.path
+    });
+    product
+        .save()
+        .then(result=>{
+            res.status(201).json({
+                message:'Create product successfully' ,
+                createdProduct: {
+                    result: result,
+                    request:{
+                        type: 'GET',
+                        url: 'http://localhost:3000/products/'+result._id
+                    }
+                }
+            });
+        })
+        .catch(err=>{
+            res.status(500).json({
+                error:err
+            });
+        });
+
+});
+```
+
++ `postman`中上传文件
+
+`Body`的格式修改成 `form-data`
+
+Key: `productImage`，并格式设置为`File`
+
+Value: 选择文件
+
+## token的设置
+
+通过API查看数据时，不同的数据可能存在权限的要求，比如通常所有用户包括游客都可以查看products，但是只有登录的用户可以增加/删除/修改产品，只有登录的用户可以增删改查订单。
+
+那么就需要设置用户登录的功能，用户登录成功之后，会在返回信息中提供token，程序就会校验token是否满足权限，然后在进行api请求。
+
+### 实现
+
+#### 安装依赖
+
+实现过程中需要两个依赖
+
+`pnpm i --save bcrypt` 加密，用于用户密码的加密和校验
+
+`pnpm i --save jsonwebtoken` token, 用户生成和校验token
+
+#### 用户登录
+
+用户登录的功能，需要用户类，可以注册用户，删除用户和登录。用户的密码需要进行加密，进行登录请求的时候需要生成token。
+
+##### 用户表设计
+
+```js
+//models/user.js
+const mongoose = require('mongoose');
+
+const userSchema = mongoose.Schema({
+    _id:mongoose.Schema.Types.ObjectId,
+    email:{
+        type:String, 
+        required:true,
+        unique:true,
+        match:/(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])/
+    },
+    password:{type:String, required:true},
+})
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+##### 用户API设计
+
+```js
+const express = require('express');
+const router= express.Router();
+
+const checkAuth = require('../middleware/check-auth');
+
+const userController = require('../controllers/user')
+
+router.post('/signup',userController.user_signup);
+
+router.post('/login',userController.user_login);
+
+router.delete('/:userId',checkAuth,userController.user_delete);
+
+module.exports = router;
+```
+
+用户注册：加密
+
+```js
+exports.user_signup = (req,res,next) => {
+    User.findOne({email: req.body.email})
+    .exec()
+    .then(user=>{
+        if(user){
+            res.status(409).json({
+                message:"Mail exists"
+            });
+        }else{
+          //密码加密
+            bcrypt.hash(req.body.password,10,(err,hash) => {
+                if(err){
+                    return res.status(500).json({
+                        err:err
+                    })
+                }else{
+                    const user = new User({
+                        _id:new mongoose.Types.ObjectId(),
+                        email:req.body.email,
+                        password:hash
+                    });
+                    user
+                    .save()
+                    .then(result=>{                       
+                        res.status(201).json({
+                            message:'Create user successfully' ,
+                            createdUser: {
+                                result: result,
+                            }
+                        });
+                    })
+                    .catch(err=>{
+                        res.status(500).json({
+                            error:err
+                        });
+                    });
+                }
+            })
+        }
+    })
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+用户登录: 校验密码、生成token
+
+```js
+exports.user_login = (req,res,next) => {
+    User.find({email: req.body.email})
+    .exec()
+    .then(user=>{
+        if(user.length<1){
+            res.status(401).json({
+                message:"Auth Failed"
+            });
+        }else{
+          //检查密码是否正确
+            bcrypt.compare(req.body.password,user[0].password,(err,result) => {
+                if(err){
+                    res.status(401).json({
+                        message:"Auth Failed"
+                    });
+                }
+                if(result){
+                  //生产token
+                    const token = jwt.sign({
+                        email:user[0].email,
+                        userId:user[0]._id
+                    },process.env.JWT_KEY,{
+                        expiresIn:"1h",
+                    });
+                    res.status(200).json({
+                        message:"Auth successfully",
+                        token:token,
+                        request:{
+                            type: 'POST',
+                            url: 'http://localhost:3000/user/signup',
+                            body:{
+                                email:"string",
+                                password:"string"
+                            }
+                        }
+                    });
+                }else{
+                    res.status(401).json({
+                        message:"Auth Failed"
+                    });
+                }
+            })
+        }
+    })
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+用户删除: 校验token
+
+```js
+exports.user_delete = (req,res,next) => {
+    const id = req.params.userId;
+    User.deleteOne({_id:id})
+    .exec()
+    .then(result=>{
+        res.status(200).json({
+            message:"User deleted successfully",
+            request:{
+                type: 'POST',
+                url: 'http://localhost:3000/user/signup',
+                body:{
+                    email:"string",
+                    password:"string"
+                }
+            }
+        });      
+    })
+    .catch(err=>{
+        res.status(500).json({
+            error:err
+        });
+    });
+};
+```
+
+#### 校验token
+
+由于多处需要校验用户是否登录，即校验token。因此应该将校验token的部分单独作为一个中间件，在api请求时，进行使用。
+
+##### 中间件
+
+新建文件夹`middleware`，然后新建文件`check-auth.js`
+
+```js
+const jwt = require('jsonwebtoken');
+
+module.exports = (req,res,next)=>{
+    try{
+        const token = req.headers.authorization.split(" ")[1];
+        const decoded = jwt.verify(token,process.env.JWT_KEY);
+        req.userData = decoded;
+        next();
+    }
+    catch(error){
+        return res.status(401).json({
+            message:'Auth failed'
+        });
+    }
+};
+```
+
+##### api请求前校验token
+
+这里以前文中用户删除为例，用户的删除操作只能是用户登录的状态下进行，因此需要进行校验。
+
+可以看到如下代码
+
+```js
+const checkAuth = require('../middleware/check-auth');
+//校验的中间件写在请求中。
+router.delete('/:userId',checkAuth,userController.user_delete);
+```
+
+如果遇到既需要校验，有需要上传文件的操作是，校验要写在上传文件中间件之前，如增加一个产品。
+
+```js
+router.post('/',checkAuth,upload.single('productImage'),productsController.create_product);
+```
+
+#### postman中输入token进行请求
+
+##### 注册用户
+
+`POST  localhost:3000/user/signup`
+
+`Body`如下
+
+```json
+{
+    "email":"123@test.com",
+    "password":"0000000"
+}
+```
+
+##### 登录用户
+
+`POST  localhost:3000/user/login`
+
+`Body`如下
+
+```json
+{
+    "email":"123@test.com",
+    "password":"0000000"
+}
+```
+
+请求成功之后，返回如下
+
+```json
+{
+    "message": "Auth successfully",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6IjEyM0B0ZXN0LmNvbSIsInVzZXJJZCI6IjY2ZTA1NGY5YTM1ZmM4OGQ0YTRhNjY5ZSIsImlhdCI6MTcyNjIzODI2OCwiZXhwIjoxNzI2MjQxODY4fQ.W8_9mmBLU4IzcycEh6sNO95wlepp6qQJToOdM9LgEQ4",
+    "request": {
+        "type": "POST",
+        "url": "http://localhost:3000/user/signup",
+        "body": {
+            "email": "string",
+            "password": "string"
+        }
+    }
+}
+```
+
+其中包括 `token` 的值，复制
+
+##### 查询订单
+
+`GET localhost:3000/orders`
+
+在`Header`中新增一个属性 `Authorization`, 并将值输入为如下 `Bearer [token]`
+
+```
+Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6IjEyM0B0ZXN0LmNvbSIsInVzZXJJZCI6IjY2ZTA1NGY5YTM1ZmM4OGQ0YTRhNjY5ZSIsImlhdCI6MTcyNjIzODI2OCwiZXhwIjoxNzI2MjQxODY4fQ.W8_9mmBLU4IzcycEh6sNO95wlepp6qQJToOdM9LgEQ4
+```
+
+然后点击发送请求，此时就可以请求成功了。
 
 ## MongoDB的设置
 
@@ -964,3 +1410,126 @@ Product.deleteOne({_id:id})
 })
 ```
 
+## api说明
+
+本地地址 http://localhost:3000
+
+### user相关
+
+| api说明  | 路由          | 请求类型 | Body                           | 是否需要token |
+| -------- | ------------- | -------- | ------------------------------ | ------------- |
+| 用户注册 | /user/signup  | POST     | { "email": "", "password": ""} |               |
+| 用户登录 | /user/login   | POST     | { "email": "", "password": ""} | 生成token     |
+| 删除用户 | /user/:userId | DELETE   |                                | 是            |
+
+```json
+//POST localhost:3000/user/signup
+//body:{
+//  "email":"test@111.com",
+//  "password":"1111"
+//}
+
+//成功请求
+{
+    "message": "Create user successfully",
+    "createdUser": {
+        "result": {
+            "_id": "670e668c1582b8a04f4bb243",
+            "email": "test@111.com",
+            "password": "$2b$10$uWfDEzRBwOBbJjRD8PmA7.14rH4RFJOHNB3G5RV6e/MP8iSLGCWPa",
+            "__v": 0
+        }
+    }
+}
+```
+
+```json
+//POST localhost:3000/user/login
+//body:{
+//  "email":"test@111.com",
+//  "password":"1111"
+//}
+
+//成功请求
+{
+    "message": "Auth successfully",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InRlc3RAMTExLmNvbSIsInVzZXJJZCI6IjY3MGU2NjhjMTU4MmI4YTA0ZjRiYjI0MyIsImlhdCI6MTcyODk5NzE3NywiZXhwIjoxNzI5MDAwNzc3fQ.kblXndIY5jErCRswvzaogOGLkeZ1ufDGHG4wIQwhT2Y",
+    "request": {
+        "type": "POST",
+        "url": "http://localhost:3000/user/signup",
+        "body": {
+            "email": "string",
+            "password": "string"
+        }
+    }
+}
+```
+
+### products相关
+
+| api说明      | 路由                 | 请求类型 | Body                                                         | 是否需要token |
+| ------------ | -------------------- | -------- | ------------------------------------------------------------ | ------------- |
+| 查看所有产品 | /products            | GET      |                                                              |               |
+| 查看指定产品 | /products/:productId | GET      |                                                              |               |
+| 新增一个产品 | /products            | POST     | Form-data { <br />name:[string/value], <br />price:[number/value],<br />productImage:[file/value] } | 是            |
+| 修改指定产品 | /products/:productId | PATCH    | [{ "propName": "name","value":"updateone" },<br />{ "propName": "price","value":1 }]<br />可以只修改一个属性 | 是            |
+| 删除指定产品 | /products/:productId | DELETE   |                                                              | 是            |
+
+```json
+//POST localhost:3000/products
+//form-data:{
+//  "name":"test",
+//  "price":9.9,
+//	"productImage":,,
+//}
+
+//未登录
+{
+    "message": "Auth failed"
+}
+
+//ok
+{
+    "message": "Create product successfully",
+    "createdProduct": {
+        "result": {
+            "_id": "670e67be1582b8a04f4bb246",
+            "name": "testproduct",
+            "price": 11,
+            "productImage": "uploads/2024-10-15T13:01:50.603Z11.jpeg",
+            "__v": 0
+        },
+        "request": {
+            "type": "GET",
+            "url": "http://localhost:3000/products/670e67be1582b8a04f4bb246"
+        }
+    }
+}
+```
+
+```json
+//PATCH localhost:3000/products/670e67be1582b8a04f4bb246
+//[{"propName":"name","value":"testproduct2update"}]
+
+//Ok
+{
+    "message": "Product updated successfully",
+    "request": {
+        "type": "GET",
+        "url": "http://localhost:3000/products/670e67be1582b8a04f4bb246"
+    }
+}
+```
+
+### orders相关
+
+| api说明      | 路由             | 请求类型 | Body                                    | 是否需要token |
+| ------------ | ---------------- | -------- | --------------------------------------- | ------------- |
+| 查看所有订单 | /orders          | GET      |                                         | 是            |
+| 查看指定订单 | /orders/:orderId | GET      |                                         | 是            |
+| 新增一个订单 | /orders          | POST     | { “productId”:"", <br />"quantity":"",} | 是            |
+| 删除指定订单 | /orders/:orderId | DELETE   |                                         | 是            |
+
+## 源码
+
+node-mongodb-template https://github.com/Sitaar/learning/tree/cd0eece9dada77b779e4473a161479c73726fee6/node-mongodb-template
